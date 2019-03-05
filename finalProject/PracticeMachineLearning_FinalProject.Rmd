@@ -1,0 +1,116 @@
+---
+title: "PracticeMachineLearning_FinalProject"
+author: "Zhihe Zhuang"
+date: "March 1, 2019"
+output: html_document
+---
+
+```{r global options setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, tidy = T, cache = T, message = F, warning = F, out.width = '4in')
+```
+
+This is all the packages that we need
+```{r}
+library(caret)
+```
+
+Import training data. (you might need to change directory to you own, thank you. They are in line 19 and 112)
+```{r}
+pml <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"), header = T)
+pml <- read.csv("C:/Users/zhihe/Documents/Machine Learning/pml-training.csv", header = T)
+set.seed(23784)
+#Divide data into training and testing set
+inTrain = createDataPartition(pml$classe, p = 3/4)[[1]]
+training = pml[inTrain,]
+testing = pml[-inTrain,]
+dim(training)
+```
+
+We split the data into training set and testing. First, we are going to clean the data set and find the most correlated variables. Second, we will fit four different models and, then we will stack four models together with random forest as the final model for prediction. Finally, to avoid over-fitting, we will applied our prediction onto another testing data set to test the model accuracy.
+
+```{r}
+#names(training)
+#Eliminate the columns that have only a few observations or little variation
+myvar <- Filter(function(x)!any(is.na(x)), training)
+nzv <- nearZeroVar(myvar, saveMetrics = T)
+myvar <- myvar[,!nzv$nzv]
+
+#change classe variable to numeric
+myvar$classes <- as.numeric(myvar$classe)
+
+# calculate correlation matrix
+correlationMatrix <- cor(myvar[,60], myvar[7:58])
+highCorrelated <- correlationMatrix[, which(abs(correlationMatrix)>0.2)]
+
+#Five variables are relatively correlative to classe:
+#"magnet_belt_y" "accel_arm_x"   "magnet_arm_x"  "magnet_arm_y"  "pitch_forearm"
+```
+
+According to the correlation matrix. There are five variables that are most correlated to categorical variable, classe. Later, we are going to fit models with these five variables.
+
+```{r}
+#Select the useful variables
+# formula <- paste("classe~",paste(names(highCorrelated), collapse = "+"))
+# formula
+
+set.seed(7892435)
+#Random Forest
+model_rf <- train(classe~magnet_belt_y+accel_arm_x+magnet_arm_x+magnet_arm_y+pitch_forearm, data = training, method = "rf")
+# summary(model_rf)
+confusionMatrix(predict(model_rf,testing),as.factor(testing$classe))
+
+#GBM
+model_gbm <- train(classe~magnet_belt_y+accel_arm_x+magnet_arm_x+magnet_arm_y+pitch_forearm, data = training, method = "gbm", verbose = F)
+# summary(model_gbm)
+confusionMatrix(predict(model_gbm,testing),as.factor(testing$classe))
+
+#Prediction with trees
+model_tree <- train(classe~magnet_belt_y+accel_arm_x+magnet_arm_x+magnet_arm_y+pitch_forearm, data = training, method = "rpart")
+# summary(model_tree)
+# plot(model_tree)
+# library(rattle)
+# fancyRpartPlot(model_tree)
+confusionMatrix(predict(model_tree,testing),as.factor(testing$classe))
+
+#lda
+model_lda <- train(classe~magnet_belt_y+accel_arm_x+magnet_arm_x+magnet_arm_y+pitch_forearm, data = training, method = "lda")
+confusionMatrix(predict(model_lda,testing),as.factor(testing$classe))
+
+#stack three predictions together with random forest
+stack_data <- data.frame(
+    rf=predict(model_rf,training)
+  , gbm=predict(model_gbm,training)
+  , tree=predict(model_tree, training)
+  , lda=predict(model_lda, training)
+  , classe=training$classe)
+
+stack_model <- train(classe~., data = stack_data, method = "rf")
+
+pred_rf_test = predict(model_rf, testing)
+pred_gbm_test = predict(model_gbm, testing)
+pred_tree_test = predict(model_tree, testing)
+pred_lda_test = predict(model_lda, testing)
+
+stack_data_test = data.frame(rf = pred_rf_test, gbm = pred_gbm_test, tree = pred_tree_test, lda = pred_lda_test, classe = testing$classe)
+
+confusionMatrix(predict(stack_model, stack_data_test),as.factor(testing$classe))
+
+# Conclusion:
+# models          Accuracy
+# Random Forest   0.7871
+# GBM             0.6609
+# Tree            0.4378 
+# LDA             0.4392 
+# Stack Model     0.7873
+```
+
+As we can see, random forest makes a good prediction on the testing data set, while tree and LDA are relatively bad. But by stacking the prediction from all models together, we makes a slightly better prediction than random forest. Additionally, all models tend to miss-classified classe B and classe C, which means muscles might react similarly when candidates are in classe B and classe C.
+
+Overall, random forest can be a good model for the data set. Stack model might give better estimations, but computing time is a drawback.
+
+```{r}
+# Prediction on 20 cases in the testing data set.
+pmlTest <- read.csv(url("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"), header = T)
+predict_test_rf <- predict(model_rf, pmlTest)
+predict_test_rf
+```
